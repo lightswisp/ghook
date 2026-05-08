@@ -18,7 +18,6 @@
 #include <elf.h>
 
 /* ================= DEFINES ================= */
-#define MAX_HOOKS 255
 #define LOG_MAX_BUFFER_SIZE 4096
 #define LOG_MAX_TIME_BUFFER_SIZE 1024
 #define COLOR_START(x) "\033["x"m"
@@ -66,20 +65,6 @@ typedef struct {
   char* section_strtab;          // dyn
 
 } elf_data_t;
-
-//typedef struct {
-//  char *func_name;
-//  uintptr_t original_func; 
-//  uintptr_t replaced_func;
-//} hook_t;
-//
-//typedef struct {
-//  hook_t hooks[MAX_HOOKS];
-//  uint8_t hooks_amount;
-//} hooks_container_t;
-//
-//uintptr_t find_hook_orig(char *func);
-//hooks_container_t hooks_container = {{0}, 0};
 
 /* ================= GLOBALS ================= */
 pthread_t g_thread;
@@ -184,6 +169,10 @@ void free_elf(elf_data_t *elf_data){
   free(elf_data->relocation_dyn_tables);
   free(elf_data->section_strtab);
   free(elf_data->symbol_tables);
+}
+
+void free_maps(maps_container_t *maps_container){
+  free(maps_container->maps);
 }
 
 bool get_elf_data(char *pathname, elf_data_t *elf_data){
@@ -298,7 +287,7 @@ bool get_function_offset(elf_data_t *elf_data, char *func, Elf64_Addr *rel_offse
     Elf64_Sym symbol_table = elf_data->symbol_tables[sym_index];
     char *symbol_name = &elf_data->section_strtab[symbol_table.st_name];
     logger_log(__func__, "checking %s", symbol_name);
-    if(strstr(symbol_name, func) != NULL){
+    if(strcmp(symbol_name, func) == 0){
       *rel_offset = current_relocation.r_offset; 
       logger_log(__func__,"%s has offset: %lu", symbol_name, current_relocation.r_offset);
       return true;
@@ -312,7 +301,7 @@ bool get_function_offset(elf_data_t *elf_data, char *func, Elf64_Addr *rel_offse
     Elf64_Sym symbol_table = elf_data->symbol_tables[sym_index];
     char *symbol_name = &elf_data->section_strtab[symbol_table.st_name];
     logger_log(__func__, "checking %s", symbol_name);
-    if(strstr(symbol_name, func) != NULL){
+    if(strcmp(symbol_name, func) == 0){
       *rel_offset = current_relocation.r_offset; 
       logger_log(__func__,"%s has offset: %lu", symbol_name, current_relocation.r_offset);
       return true;
@@ -384,7 +373,6 @@ __attribute__((constructor)) void __library_startup(){
 
 /* ================= REPLACED FUNCS ================= */
 int strcmp_detour (const char *str1, const char *str2){
-  return 0;
   logger_log(__func__, "str1: %s | str2: %s", str1, str2);
 
   strcmp_sig original_strcmp = (strcmp_sig)o_strcmp;
@@ -428,6 +416,7 @@ void* __main_thread(void *a __attribute__((unused))){
   got_hook(&elf_data, &maps_container, "printf", (uintptr_t)printf_detour, &o_printf);
 
   free_elf(&elf_data);
+  free_maps(&maps_container);
   return NULL;
 }
 
