@@ -143,6 +143,10 @@ bool get_maps(pid_t pid, maps_container_t *maps_container){
   }
   rewind(f);
   maps_container->maps = malloc(maps_container->vma_count * sizeof(maps_t));
+  if(maps_container->maps == NULL){
+    logger_fatal(__func__, "malloc failed"); 
+    return false;
+  }
 
   size_t i = 0;
   while(fgets(maps_buf, sizeof(maps_buf), f)){
