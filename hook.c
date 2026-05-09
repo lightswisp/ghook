@@ -1,6 +1,10 @@
 // gcc -shared -o hook.so -fPIC hook.c
+// Maybe i will add dynamic arrays later 
+// Also, fread's might slow down the init phase
 // 1:17:33
 #include <assert.h>
+#include <dlfcn.h>
+#include <sys/socket.h>
 #include <sys/mman.h>
 #include <errno.h>
 #include <linux/limits.h>
@@ -46,23 +50,27 @@ typedef struct {
   Elf64_Shdr* section_headers;  // dyn
   char*       section_strtable; // dyn
 
-  Elf64_Half symtab_idx;
-  Elf64_Half reltab_plt_idx;
-  Elf64_Half reltab_dyn_idx;
-
   Elf64_Shdr symtab_header;
+  Elf64_Shdr dynamic_header;
   Elf64_Shdr reltab_plt_header;
   Elf64_Shdr reltab_dyn_header;
   Elf64_Shdr strtab_header;
+  Elf64_Shdr dynstr_header;
   Elf64_Half reltab_plt_num;   
   Elf64_Half reltab_dyn_num;   
   Elf64_Half symtab_num;  
+  Elf64_Half dynamic_num;   
 
+  Elf64_Dyn*  dynamic_section;      // dyn
   Elf64_Rela* relocation_plt_tables; // dyn
   Elf64_Rela* relocation_dyn_tables; // dyn
   Elf64_Sym*  symbol_tables;     // dyn
+                                 //
+  size_t      libraries_num;
+  void**      libraries_handles; // dyn
 
   char* section_strtab;          // dyn
+  char* dynstr;                  // dyn
 
 } elf_data_t;
 
@@ -71,6 +79,10 @@ pthread_t g_thread;
 void *__main_thread(void *a);
 
 /* ================= ORIGINAL ADDRS  ================= */
+typedef ssize_t (*sendto_sig)(int socket, const void *message, size_t length,
+         int flags, const struct sockaddr *dest_addr,
+         socklen_t dest_len);
+uintptr_t o_sendto;
 typedef int (*strcmp_sig)(const char*, const char*);
 uintptr_t o_strcmp;
 typedef int (*printf_sig)(const char *format, ...);
@@ -173,6 +185,9 @@ void free_elf(elf_data_t *elf_data){
   free(elf_data->relocation_dyn_tables);
   free(elf_data->section_strtab);
   free(elf_data->symbol_tables);
+  free(elf_data->dynamic_section);
+  free(elf_data->libraries_handles);
+  free(elf_data->dynstr);
 }
 
 void free_maps(maps_container_t *maps_container){
@@ -220,25 +235,34 @@ bool get_elf_data(char *pathname, elf_data_t *elf_data){
 
     if(current_section.sh_type == SHT_RELA){
       char *section_name = &elf_data->section_strtable[current_section.sh_name];
-      if(strcmp(section_name, ".rela.plt") == 0) elf_data->reltab_plt_idx = i;
-      if(strcmp(section_name, ".rela.dyn") == 0) elf_data->reltab_dyn_idx = i;
+      if(strcmp(section_name, ".rela.plt") == 0) 
+        elf_data->reltab_plt_header = elf_data->section_headers[i];
+
+      if(strcmp(section_name, ".rela.dyn") == 0) 
+        elf_data->reltab_dyn_header = elf_data->section_headers[i];
+    }
+
+    if(current_section.sh_type == SHT_DYNAMIC){
+      elf_data->dynamic_header = elf_data->section_headers[i]; 
     }
 
     if(current_section.sh_type == SHT_DYNSYM){
-      elf_data->symtab_idx = i;
+      elf_data->symtab_header = elf_data->section_headers[i];
     }
   }
 
-  elf_data->symtab_header         = elf_data->section_headers[elf_data->symtab_idx];
-  elf_data->reltab_plt_header     = elf_data->section_headers[elf_data->reltab_plt_idx];
-  elf_data->reltab_dyn_header     = elf_data->section_headers[elf_data->reltab_dyn_idx];
   elf_data->strtab_header         = elf_data->section_headers[elf_data->symtab_header.sh_link];
+  elf_data->dynstr_header         = elf_data->section_headers[elf_data->dynamic_header.sh_link];
+  elf_data->dynamic_num           = elf_data->dynamic_header.sh_size / elf_data->dynamic_header.sh_entsize;
   elf_data->reltab_plt_num        = elf_data->reltab_plt_header.sh_size / elf_data->reltab_plt_header.sh_entsize;
   elf_data->reltab_dyn_num        = elf_data->reltab_dyn_header.sh_size / elf_data->reltab_dyn_header.sh_entsize;
   elf_data->symtab_num            = elf_data->symtab_header.sh_size / elf_data->symtab_header.sh_entsize;
   elf_data->relocation_plt_tables = malloc(sizeof(Elf64_Rela) * elf_data->reltab_plt_num);
   elf_data->relocation_dyn_tables = malloc(sizeof(Elf64_Rela) * elf_data->reltab_dyn_num);
   elf_data->symbol_tables         = malloc(sizeof(Elf64_Sym) * elf_data->symtab_num);
+  elf_data->dynamic_section       = malloc(sizeof(Elf64_Dyn) * elf_data->dynamic_num);
+  elf_data->section_strtab        = malloc(elf_data->strtab_header.sh_size);
+  elf_data->dynstr                = malloc(elf_data->dynstr_header.sh_size);
 
   if(elf_data->relocation_plt_tables == NULL){
     logger_fatal(__func__, "malloc failed"); 
@@ -255,11 +279,23 @@ bool get_elf_data(char *pathname, elf_data_t *elf_data){
     return false;
   }
 
-  elf_data->section_strtab = malloc(elf_data->strtab_header.sh_size);
   if(elf_data->section_strtab == NULL){
     logger_fatal(__func__, "malloc failed"); 
     return false;
   }
+
+  if(elf_data->dynamic_section == NULL){
+    logger_fatal(__func__, "malloc failed"); 
+    return false;
+  }
+
+  if(elf_data->dynstr == NULL){
+    logger_fatal(__func__, "malloc failed"); 
+    return false;
+  }
+
+  fseek(f, elf_data->dynstr_header.sh_offset, SEEK_SET);
+  fread(elf_data->dynstr, 1, elf_data->dynstr_header.sh_size, f);
 
   fseek(f, elf_data->strtab_header.sh_offset, SEEK_SET);
   fread(elf_data->section_strtab, 1, elf_data->strtab_header.sh_size, f);
@@ -278,6 +314,36 @@ bool get_elf_data(char *pathname, elf_data_t *elf_data){
   fseek(f, elf_data->reltab_dyn_header.sh_offset, SEEK_SET);
   for(Elf64_Half i = 0; i < elf_data->reltab_dyn_num; i++){
     fread(&elf_data->relocation_dyn_tables[i], 1, elf_data->reltab_dyn_header.sh_entsize, f);
+  }
+
+  fseek(f, elf_data->dynamic_header.sh_offset, SEEK_SET);
+  for(Elf64_Half i = 0; i < elf_data->dynamic_num; i++){
+    fread(&elf_data->dynamic_section[i], sizeof(Elf64_Dyn), 1, f);
+    if(elf_data->dynamic_section[i].d_tag == DT_NEEDED){
+      if(elf_data->libraries_handles == NULL){ 
+        elf_data->libraries_handles = malloc(sizeof(void*));
+        if(elf_data->libraries_handles == NULL){
+          logger_fatal(__func__, "malloc failed"); 
+          return false;
+        }
+      }
+      else{                                    
+        elf_data->libraries_handles = realloc(elf_data->libraries_handles, elf_data->libraries_num* sizeof(void*)); 
+        if(elf_data->libraries_handles == NULL){
+          logger_fatal(__func__, "realloc failed"); 
+          return false;
+        }
+      }
+
+      const char *path = &elf_data->dynstr[elf_data->dynamic_section[i].d_un.d_val];
+      elf_data->libraries_handles[elf_data->libraries_num] = dlopen(path, RTLD_NOW);
+      if(elf_data->libraries_handles[elf_data->libraries_num] == NULL){
+        logger_fatal(__func__, "unable to obtain handle for %s", path);
+        return false;
+      }
+      logger_log(__func__, "got handle for %s = %p", path, elf_data->libraries_handles[elf_data->libraries_num]);
+      elf_data->libraries_num++; 
+    }
   }
 
   return true;
@@ -324,17 +390,34 @@ uintptr_t* get_function_got_address(elf_data_t *elf_data, uintptr_t base, char *
   }
   uintptr_t *got_addr = (uintptr_t*)(base + rel_offset);
   return got_addr;
+
+}
+
+void* resolve_function_addr(elf_data_t *elf_data, char *func){
+  for(size_t i = 0; i < elf_data->libraries_num; i++){
+    void* resolved_addr = dlsym(elf_data->libraries_handles[i], func);
+    if(resolved_addr != NULL)
+      return resolved_addr;
+  }
+  return NULL;
 }
 
 bool got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char *func, uintptr_t replace_addr, uintptr_t *backup_addr){
   uintptr_t *orig_addr = get_function_got_address(elf_data, maps_container->maps[0].a_s, func);
 
   if(orig_addr == NULL){
-    logger_fatal(__func__, "failed to set hook for %s", func); 
+    logger_fatal(__func__, "failed to obtain got address for %s", func); 
     return false;
   }
-  *backup_addr = *orig_addr;
 
+  void* resolved_addr = resolve_function_addr(elf_data, func);
+  if(resolved_addr == NULL){
+    logger_fatal(__func__, "unable to resolve %s", func);  
+    return false;
+  }
+
+  *backup_addr = (uintptr_t)resolved_addr;
+  
   for(size_t i = 0; i < maps_container->vma_count; i++){
     if((uintptr_t)orig_addr >= maps_container->maps[i].a_s &&
        (uintptr_t)orig_addr < maps_container->maps[i].a_e){
@@ -397,6 +480,15 @@ int printf_detour(const char *format, ...){
     return ret;
 }
 
+ssize_t sendto_detour(int socket, const void *message, size_t length,
+         int flags, const struct sockaddr *dest_addr,
+         socklen_t dest_len){
+  
+  logger_log(__func__, "[sniffed] socket: %d | message: %s", socket, message);
+  sendto_sig original_sendto = (sendto_sig)o_sendto;
+  return original_sendto(socket, message, length, flags, dest_addr, dest_len);
+}
+
 void* __main_thread(void *a __attribute__((unused))){
   /* entry point */
   
@@ -418,6 +510,7 @@ void* __main_thread(void *a __attribute__((unused))){
   
   got_hook(&elf_data, &maps_container, "strcmp", (uintptr_t)strcmp_detour, &o_strcmp);
   got_hook(&elf_data, &maps_container, "printf", (uintptr_t)printf_detour, &o_printf);
+  got_hook(&elf_data, &maps_container, "sendto", (uintptr_t)sendto_detour, &o_sendto);
 
   free_elf(&elf_data);
   free_maps(&maps_container);
