@@ -1,15 +1,25 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
-project(ghook)
+project(ghook LANGUAGES C)
 
-add_library(hook SHARED hook.c)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set_target_properties(hook PROPERTIES
+set(SOURCES src/ghook.c)
+
+add_library(ghook STATIC ${SOURCES})
+
+target_include_directories(ghook
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+set_target_properties(ghook PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-target_compile_options(hook PRIVATE -ggdb)
-
-set_target_properties(hook PROPERTIES
-    OUTPUT_NAME "hook"
+target_compile_options(ghook PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
 )
