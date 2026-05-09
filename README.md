@@ -73,9 +73,12 @@ ghook_free_elf(&elf_data);
 ghook_free_maps(&maps_container);
 ```
 
-#### Final step
+#### Final step:
 Create your own shared library project and link it against the libghook.a static library produced in the previous step. For a practical implementation refer to the provided source code in the examples/ directory.
 
 ## Demo
 
 https://github.com/user-attachments/assets/20e859a6-a298-4cab-9fd3-f55112be2af5
+
+## License 
+ghook is distributed under the WTFPL license. See LICENSE file.
