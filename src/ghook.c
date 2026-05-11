@@ -30,7 +30,6 @@
 #define YELLOW         "33"
 
 
-
 /* ================= FUNCS ================= */
 void ghook_logger_log(const char *func, const char *fmt, ...){
   char buffer[LOG_MAX_BUFFER_SIZE];
@@ -102,7 +101,11 @@ bool ghook_get_maps(maps_container_t *maps_container){
 
   size_t i = 0;
   while(fgets(maps_buf, sizeof(maps_buf), f)){
-    sscanf(maps_buf, "%lx-%lx %s %x %s %d %s", 
+
+    if(i >= maps_container->vma_count) 
+      break;
+
+    sscanf(maps_buf, "%lx-%lx %4s %lx %254s %d %4095s", 
           &maps_container->maps[i].a_s, 
           &maps_container->maps[i].a_e, 
           maps_container->maps[i].perms, 

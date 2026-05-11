@@ -11,7 +11,7 @@
 typedef struct {
   uintptr_t a_s, a_e;
   char perms[5];
-  uint32_t offset;
+  uintptr_t offset;
   char dev[255];
   int inode;
   char pathname[PATH_MAX];
