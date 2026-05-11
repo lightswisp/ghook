@@ -347,8 +347,15 @@ static void* resolve_function_addr(elf_data_t *elf_data, char *func){
   return NULL;
 }
 
-bool ghook_got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char *func, uintptr_t replace_addr, uintptr_t *backup_addr){
-  uintptr_t *orig_addr = ghook_get_function_got_address(elf_data, maps_container->maps[0].a_s, func);
+bool ghook_got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char *func, char *lib, uintptr_t replace_addr, uintptr_t *backup_addr){
+
+  uintptr_t *orig_addr = NULL;
+  for(size_t i = 0; i < maps_container->vma_count; i++){
+    if(strcmp(maps_container->maps[i].pathname, lib) == 0){
+      orig_addr = ghook_get_function_got_address(elf_data, maps_container->maps[i].a_s, func);
+      break;
+    }
+  }
 
   if(orig_addr == NULL){
     ghook_logger_fatal(__func__, "failed to obtain got address for %s", func); 
@@ -369,12 +376,12 @@ bool ghook_got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char
       /* check perms */
       if(maps_container->maps[i].perms[1] != 'w'){
         /* not writeable */
-        size_t pagesize = sysconf(_SC_PAGESIZE);
+        size_t pagesize = (maps_container->maps[i].a_e - maps_container->maps[i].a_s);
         if(mprotect((void*)maps_container->maps[i].a_s, pagesize, PROT_READ | PROT_WRITE) != 0){
           ghook_logger_fatal(__func__, "failed to change page protection"); 
           return false;
         }
-        ghook_logger_log(__func__, "successfully changed protection for %s page at %p", func, maps_container->maps[i].a_s);
+        ghook_logger_log(__func__, "successfully changed protection for %s page [%p - %p]", func, maps_container->maps[i].a_s, maps_container->maps[i].a_e);
       }
       break;
     }

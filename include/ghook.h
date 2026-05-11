@@ -53,7 +53,7 @@ typedef struct {
 
 bool ghook_get_maps(maps_container_t *maps_container);
 bool ghook_get_elf_data(char *pathname, elf_data_t *elf_data);
-bool ghook_got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char *func, uintptr_t replace_addr, uintptr_t *backup_addr);
+bool ghook_got_hook(elf_data_t *elf_data, maps_container_t *maps_container, char *func, char *lib, uintptr_t replace_addr, uintptr_t *backup_addr);
 void ghook_free_elf(elf_data_t *elf_data);
 void ghook_free_maps(maps_container_t *maps_container);
 void ghook_logger_log(const char *func, const char *fmt, ...);

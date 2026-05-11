@@ -61,11 +61,11 @@ if(!ghook_get_elf_data(maps_container.maps[0].pathname, &elf_data)){
 ```
 
 #### Applying Hooks:
-Use ghook_got_hook to redirect PLT entries. You will need the symbol name, your detour function address, and a pointer to store the original function address.
+Use ghook_got_hook to redirect PLT entries. You will need the symbol name, your detour function address, executable name where function@plt is being used and a pointer to store the original function address.
 ```c
-ghook_got_hook(&elf_data, &maps_container, "strcmp", (uintptr_t)strcmp_detour, &o_strcmp);
-ghook_got_hook(&elf_data, &maps_container, "printf", (uintptr_t)printf_detour, &o_printf);
-ghook_got_hook(&elf_data, &maps_container, "sendto", (uintptr_t)sendto_detour, &o_sendto);
+ghook_got_hook(&elf_data, &maps_container, "strcmp", "a.out", (uintptr_t)strcmp_detour, &o_strcmp);
+ghook_got_hook(&elf_data, &maps_container, "printf", "a.out", (uintptr_t)printf_detour, &o_printf);
+ghook_got_hook(&elf_data, &maps_container, "sendto", "a.out", (uintptr_t)sendto_detour, &o_sendto);
 ```
 #### Dont forget to free at the end:
 ```c
